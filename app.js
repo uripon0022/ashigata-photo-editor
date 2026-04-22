@@ -57,6 +57,9 @@ const state = {
   dragStart: null,
   rectPreview: null,
   panStart: null,
+  pointers: new Map(),
+  pinch: null,
+  suppressDraw: false,
   color: { r: 90, g: 47, b: 31, h: 18, s: 66, v: 35 },
   undo: [],
   redo: [],
@@ -213,6 +216,13 @@ function imagePoint(evt) {
     y: Math.floor((evt.clientY - rect.top - state.view.y) / state.view.scale),
     stageX: evt.clientX - rect.left,
     stageY: evt.clientY - rect.top,
+  };
+}
+
+function stageToImagePoint(stageX, stageY) {
+  return {
+    x: Math.floor((stageX - state.view.x) / state.view.scale),
+    y: Math.floor((stageY - state.view.y) / state.view.scale),
   };
 }
 
@@ -389,6 +399,50 @@ function colorDistance(data, index, color) {
   const dg = data[index + 1] - color.g;
   const db = data[index + 2] - color.b;
   return Math.sqrt(dr * dr + dg * dg + db * db);
+}
+
+function selectSimilarAt(x, y, record = true) {
+  if (!state.imageData || !inBounds(x, y)) return;
+  if (record) pushHistory();
+
+  const { width, height, data } = state.imageData;
+  const start = y * width + x;
+  const startIndex = start * 4;
+  const target = {
+    r: data[startIndex],
+    g: data[startIndex + 1],
+    b: data[startIndex + 2],
+    a: data[startIndex + 3],
+  };
+  const tolerance = Number(els.tolerance.value);
+  const mask = createMask(0);
+  const visited = new Uint8Array(width * height);
+  const queue = [[x, y]];
+  let cursor = 0;
+
+  function shouldSelect(pixelIndex) {
+    const p = pixelIndex * 4;
+    const alphaDiff = Math.abs(data[p + 3] - target.a);
+    return colorDistance(data, p, target) <= tolerance && alphaDiff <= tolerance * 1.5;
+  }
+
+  while (cursor < queue.length) {
+    const [cx, cy] = queue[cursor];
+    cursor += 1;
+    if (!inBounds(cx, cy)) continue;
+    const pixel = cy * width + cx;
+    if (visited[pixel]) continue;
+    visited[pixel] = 1;
+    if (!shouldSelect(pixel)) continue;
+    mask.data[pixel] = 1;
+    queue.push([cx + 1, cy]);
+    queue.push([cx - 1, cy]);
+    queue.push([cx, cy + 1]);
+    queue.push([cx, cy - 1]);
+  }
+
+  state.selection = mask;
+  draw();
 }
 
 function averageEdgeColor() {
@@ -730,11 +784,58 @@ els.viewButtons.forEach((button) => {
   button.addEventListener("click", () => setViewMode(button.dataset.view));
 });
 
+function pointerStagePosition(evt) {
+  const rect = stage.getBoundingClientRect();
+  return {
+    stageX: evt.clientX - rect.left,
+    stageY: evt.clientY - rect.top,
+  };
+}
+
+function pinchInfo() {
+  const points = [...state.pointers.values()];
+  if (points.length < 2) return null;
+  const [a, b] = points;
+  const center = {
+    stageX: (a.stageX + b.stageX) / 2,
+    stageY: (a.stageY + b.stageY) / 2,
+  };
+  return {
+    ...center,
+    distance: Math.hypot(a.stageX - b.stageX, a.stageY - b.stageY),
+    imagePoint: stageToImagePoint(center.stageX, center.stageY),
+  };
+}
+
+function updatePointer(evt) {
+  state.pointers.set(evt.pointerId, pointerStagePosition(evt));
+}
+
+function endPointer(evt) {
+  state.pointers.delete(evt.pointerId);
+  if (state.pointers.size < 2) state.pinch = null;
+}
+
 stage.addEventListener("pointerdown", (evt) => {
   if (!state.imageData) return;
   stage.setPointerCapture(evt.pointerId);
+  updatePointer(evt);
+
+  if (state.pointers.size === 2) {
+    state.pinch = {
+      ...pinchInfo(),
+      scale: state.view.scale,
+      x: state.view.x,
+      y: state.view.y,
+    };
+    state.drawing = false;
+    state.suppressDraw = true;
+    return;
+  }
+
   const point = imagePoint(evt);
   state.drawing = true;
+  state.suppressDraw = false;
 
   if (state.tool === "pan") {
     state.panStart = { stageX: point.stageX, stageY: point.stageY, x: state.view.x, y: state.view.y };
@@ -747,6 +848,11 @@ stage.addEventListener("pointerdown", (evt) => {
   }
 
   pushHistory();
+  if (state.tool === "magic" && inBounds(point.x, point.y)) {
+    selectSimilarAt(point.x, point.y, false);
+    state.drawing = false;
+    return;
+  }
   if (state.tool === "brush" && inBounds(point.x, point.y)) paintCircle(point.x, point.y, 1);
   if (state.tool === "eraser" && inBounds(point.x, point.y)) eraseCircle(point.x, point.y);
   if (state.tool === "restore" && inBounds(point.x, point.y)) restoreCircle(point.x, point.y);
@@ -758,6 +864,18 @@ stage.addEventListener("pointerdown", (evt) => {
 });
 
 stage.addEventListener("pointermove", (evt) => {
+  if (state.pointers.has(evt.pointerId)) updatePointer(evt);
+  if (state.pinch && state.pointers.size >= 2) {
+    const current = pinchInfo();
+    if (!current || !state.pinch.distance) return;
+    const nextScale = Math.min(6, Math.max(0.06, state.pinch.scale * (current.distance / state.pinch.distance)));
+    state.view.scale = nextScale;
+    state.view.x = current.stageX - state.pinch.imagePoint.x * nextScale;
+    state.view.y = current.stageY - state.pinch.imagePoint.y * nextScale;
+    draw();
+    return;
+  }
+
   if (!state.drawing || !state.imageData) return;
   const point = imagePoint(evt);
 
@@ -783,6 +901,13 @@ stage.addEventListener("pointermove", (evt) => {
 });
 
 stage.addEventListener("pointerup", (evt) => {
+  endPointer(evt);
+  if (state.suppressDraw) {
+    state.suppressDraw = false;
+    state.drawing = false;
+    state.panStart = null;
+    return;
+  }
   if (!state.drawing || !state.imageData) return;
   const point = imagePoint(evt);
   if (state.tool === "rect" && state.dragStart) {
@@ -792,6 +917,15 @@ stage.addEventListener("pointerup", (evt) => {
   }
   state.drawing = false;
   state.panStart = null;
+  draw();
+});
+
+stage.addEventListener("pointercancel", (evt) => {
+  endPointer(evt);
+  state.drawing = false;
+  state.panStart = null;
+  state.rectPreview = null;
+  state.suppressDraw = false;
   draw();
 });
 

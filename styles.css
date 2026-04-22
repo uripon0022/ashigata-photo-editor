@@ -173,6 +173,7 @@ input[type="range"] {
   grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
   min-width: 0;
+  min-height: 0;
 }
 
 .topbar {
@@ -428,5 +429,135 @@ input[type="range"] {
 
   .view-switch {
     grid-column: 1 / -1;
+  }
+}
+
+@media (orientation: landscape) and (pointer: coarse) and (min-width: 821px) {
+  body {
+    overflow: hidden;
+  }
+
+  .app-shell {
+    grid-template-columns: 218px minmax(0, 1fr) 238px;
+    gap: 8px;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  }
+
+  .panel {
+    min-height: 0;
+    max-height: calc(100dvh - 16px);
+    box-shadow: none;
+  }
+
+  .tools-panel,
+  .color-panel {
+    gap: 9px;
+    padding: 10px;
+  }
+
+  .color-panel {
+    grid-column: auto;
+    display: flex;
+  }
+
+  .brand {
+    align-items: center;
+  }
+
+  .brand p,
+  .info-list {
+    display: none;
+  }
+
+  h1 {
+    font-size: 17px;
+  }
+
+  .tool-group {
+    gap: 7px;
+  }
+
+  .segmented {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .button-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  button,
+  #hexColor,
+  .number-grid input {
+    min-height: 36px;
+  }
+
+  .file-picker {
+    min-height: 40px;
+  }
+
+  .tool-group label {
+    gap: 2px;
+    font-size: 12px;
+  }
+
+  input[type="range"] {
+    min-height: 24px;
+  }
+
+  .topbar {
+    padding: 8px;
+    gap: 8px;
+  }
+
+  .status span {
+    display: none;
+  }
+
+  .status strong {
+    font-size: 13px;
+  }
+
+  .top-actions {
+    gap: 6px;
+  }
+
+  .view-switch {
+    gap: 2px;
+    padding: 2px;
+  }
+
+  .view-switch button {
+    min-height: 32px;
+    padding: 0 7px;
+  }
+
+  .icon-button {
+    width: 36px;
+  }
+
+  .canvas-stage {
+    min-height: 0;
+    height: 100%;
+  }
+
+  .color-preview {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .color-map {
+    height: 96px;
+  }
+
+  .number-grid {
+    gap: 6px;
+  }
+
+  .check-row input {
+    width: 16px;
+    height: 16px;
   }
 }
