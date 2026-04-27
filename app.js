@@ -407,7 +407,6 @@ function selectSimilarAt(x, y, record = true) {
 
   const { width, height, data } = state.imageData;
   const start = y * width + x;
-  const wasSelected = state.selection ? Boolean(state.selection.data[start]) : false;
   const startIndex = start * 4;
   const target = {
     r: data[startIndex],
@@ -442,14 +441,7 @@ function selectSimilarAt(x, y, record = true) {
     queue.push([cx, cy - 1]);
   }
 
-  if (!state.selection) {
-    state.selection = mask;
-  } else {
-    for (let i = 0; i < mask.data.length; i += 1) {
-      if (!mask.data[i]) continue;
-      state.selection.data[i] = wasSelected ? 0 : 1;
-    }
-  }
+  state.selection = mask;
   draw();
 }
 
