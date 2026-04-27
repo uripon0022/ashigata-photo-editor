@@ -401,7 +401,7 @@ function colorDistance(data, index, color) {
   return Math.sqrt(dr * dr + dg * dg + db * db);
 }
 
-function selectSimilarAt(x, y, record = true) {
+function selectSimilarAt(x, y, record = true, additive = false) {
   if (!state.imageData || !inBounds(x, y)) return;
   if (record) pushHistory();
 
@@ -441,7 +441,13 @@ function selectSimilarAt(x, y, record = true) {
     queue.push([cx, cy - 1]);
   }
 
-  state.selection = mask;
+  if (additive && state.selection) {
+    for (let i = 0; i < mask.data.length; i += 1) {
+      if (mask.data[i]) state.selection.data[i] = 1;
+    }
+  } else {
+    state.selection = mask;
+  }
   draw();
 }
 
@@ -849,7 +855,7 @@ stage.addEventListener("pointerdown", (evt) => {
 
   pushHistory();
   if (state.tool === "magic" && inBounds(point.x, point.y)) {
-    selectSimilarAt(point.x, point.y, false);
+    selectSimilarAt(point.x, point.y, false, evt.metaKey || evt.ctrlKey);
     state.drawing = false;
     return;
   }
