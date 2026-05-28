@@ -279,26 +279,6 @@ function rotateImageData(imageData, direction) {
   return new ImageData(rotated, nextWidth, nextHeight);
 }
 
-function rotateSelection(selection, direction) {
-  if (!selection) return null;
-  const width = selection.width;
-  const height = selection.height;
-  const nextWidth = height;
-  const nextHeight = width;
-  const rotated = new Uint8Array(width * height);
-
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const sourceIndex = y * width + x;
-      const nextX = direction === "right" ? height - 1 - y : y;
-      const nextY = direction === "right" ? x : width - 1 - x;
-      rotated[nextY * nextWidth + nextX] = selection.data[sourceIndex];
-    }
-  }
-
-  return { width: nextWidth, height: nextHeight, data: rotated };
-}
-
 function pushHistory() {
   if (!state.imageData) return;
   state.undo.push({
@@ -361,7 +341,7 @@ function rotateCanvas(direction) {
   pushHistory();
   state.imageData = rotateImageData(state.imageData, direction);
   state.originalData = rotateImageData(state.originalData, direction);
-  state.selection = rotateSelection(state.selection, direction);
+  state.selection = null;
   fitImageToStage();
   draw();
 }
