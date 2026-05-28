@@ -21,6 +21,8 @@ const els = {
   clearSelectionButton: document.querySelector("#clearSelectionButton"),
   deleteSelectionButton: document.querySelector("#deleteSelectionButton"),
   keepSelectionButton: document.querySelector("#keepSelectionButton"),
+  rotateLeftButton: document.querySelector("#rotateLeftButton"),
+  rotateRightButton: document.querySelector("#rotateRightButton"),
   undoButton: document.querySelector("#undoButton"),
   redoButton: document.querySelector("#redoButton"),
   previewBgButton: document.querySelector("#previewBgButton"),
@@ -49,6 +51,7 @@ const state = {
   tool: "brush",
   imageData: null,
   originalData: null,
+  resetData: null,
   viewMode: "edited",
   hasColorApplied: false,
   selection: null,
@@ -242,14 +245,67 @@ function ensureSelection() {
   if (!state.selection) state.selection = createMask(0);
 }
 
+function cloneImageData(imageData) {
+  return new ImageData(new Uint8ClampedArray(imageData.data), imageData.width, imageData.height);
+}
+
+function cloneSelection(selection) {
+  return selection
+    ? { width: selection.width, height: selection.height, data: new Uint8Array(selection.data) }
+    : null;
+}
+
+function rotateImageData(imageData, direction) {
+  const source = imageData.data;
+  const width = imageData.width;
+  const height = imageData.height;
+  const rotated = new Uint8ClampedArray(source.length);
+  const nextWidth = height;
+  const nextHeight = width;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const sourceIndex = (y * width + x) * 4;
+      const nextX = direction === "right" ? height - 1 - y : y;
+      const nextY = direction === "right" ? x : width - 1 - x;
+      const targetIndex = (nextY * nextWidth + nextX) * 4;
+      rotated[targetIndex] = source[sourceIndex];
+      rotated[targetIndex + 1] = source[sourceIndex + 1];
+      rotated[targetIndex + 2] = source[sourceIndex + 2];
+      rotated[targetIndex + 3] = source[sourceIndex + 3];
+    }
+  }
+
+  return new ImageData(rotated, nextWidth, nextHeight);
+}
+
+function rotateSelection(selection, direction) {
+  if (!selection) return null;
+  const width = selection.width;
+  const height = selection.height;
+  const nextWidth = height;
+  const nextHeight = width;
+  const rotated = new Uint8Array(width * height);
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const sourceIndex = y * width + x;
+      const nextX = direction === "right" ? height - 1 - y : y;
+      const nextY = direction === "right" ? x : width - 1 - x;
+      rotated[nextY * nextWidth + nextX] = selection.data[sourceIndex];
+    }
+  }
+
+  return { width: nextWidth, height: nextHeight, data: rotated };
+}
+
 function pushHistory() {
   if (!state.imageData) return;
   state.undo.push({
-    imageData: new ImageData(new Uint8ClampedArray(state.imageData.data), state.imageData.width, state.imageData.height),
+    imageData: cloneImageData(state.imageData),
+    originalData: cloneImageData(state.originalData),
     hasColorApplied: state.hasColorApplied,
-    selection: state.selection
-      ? { width: state.selection.width, height: state.selection.height, data: new Uint8Array(state.selection.data) }
-      : null,
+    selection: cloneSelection(state.selection),
   });
   if (state.undo.length > 30) state.undo.shift();
   state.redo = [];
@@ -257,25 +313,19 @@ function pushHistory() {
 }
 
 function restoreSnapshot(snapshot) {
-  state.imageData = new ImageData(
-    new Uint8ClampedArray(snapshot.imageData.data),
-    snapshot.imageData.width,
-    snapshot.imageData.height
-  );
-  state.selection = snapshot.selection
-    ? { width: snapshot.selection.width, height: snapshot.selection.height, data: new Uint8Array(snapshot.selection.data) }
-    : null;
+  state.imageData = cloneImageData(snapshot.imageData);
+  state.originalData = cloneImageData(snapshot.originalData);
+  state.selection = cloneSelection(snapshot.selection);
   state.hasColorApplied = Boolean(snapshot.hasColorApplied);
   draw();
 }
 
 function snapshotCurrent() {
   return {
-    imageData: new ImageData(new Uint8ClampedArray(state.imageData.data), state.imageData.width, state.imageData.height),
+    imageData: cloneImageData(state.imageData),
+    originalData: cloneImageData(state.originalData),
     hasColorApplied: state.hasColorApplied,
-    selection: state.selection
-      ? { width: state.selection.width, height: state.selection.height, data: new Uint8Array(state.selection.data) }
-      : null,
+    selection: cloneSelection(state.selection),
   };
 }
 
@@ -302,6 +352,16 @@ function setTool(tool) {
 function setViewMode(viewMode) {
   state.viewMode = viewMode;
   els.viewButtons.forEach((button) => button.classList.toggle("active", button.dataset.view === viewMode));
+  fitImageToStage();
+  draw();
+}
+
+function rotateCanvas(direction) {
+  if (!state.imageData || !state.originalData) return;
+  pushHistory();
+  state.imageData = rotateImageData(state.imageData, direction);
+  state.originalData = rotateImageData(state.originalData, direction);
+  state.selection = rotateSelection(state.selection, direction);
   fitImageToStage();
   draw();
 }
@@ -759,11 +819,8 @@ function loadImage(file) {
     const loadCtx = loadCanvas.getContext("2d", { willReadFrequently: true });
     loadCtx.drawImage(img, 0, 0);
     state.imageData = loadCtx.getImageData(0, 0, loadCanvas.width, loadCanvas.height);
-    state.originalData = new ImageData(
-      new Uint8ClampedArray(state.imageData.data),
-      state.imageData.width,
-      state.imageData.height
-    );
+    state.originalData = cloneImageData(state.imageData);
+    state.resetData = cloneImageData(state.imageData);
     state.selection = null;
     state.undo = [];
     state.redo = [];
@@ -966,6 +1023,8 @@ els.clearSelectionButton.addEventListener("click", () => {
 els.deleteSelectionButton.addEventListener("click", () => applyAlphaToSelection(true));
 els.keepSelectionButton.addEventListener("click", () => applyAlphaToSelection(false));
 els.applyColorButton.addEventListener("click", applyColor);
+els.rotateLeftButton.addEventListener("click", () => rotateCanvas("left"));
+els.rotateRightButton.addEventListener("click", () => rotateCanvas("right"));
 
 els.undoButton.addEventListener("click", () => {
   if (!state.undo.length) return;
@@ -985,13 +1044,10 @@ els.previewBgButton.addEventListener("click", () => {
 });
 
 els.resetButton.addEventListener("click", () => {
-  if (!state.originalData) return;
+  if (!state.resetData) return;
   pushHistory();
-  state.imageData = new ImageData(
-    new Uint8ClampedArray(state.originalData.data),
-    state.originalData.width,
-    state.originalData.height
-  );
+  state.imageData = cloneImageData(state.resetData);
+  state.originalData = cloneImageData(state.resetData);
   state.selection = null;
   state.hasColorApplied = false;
   fitImageToStage();
