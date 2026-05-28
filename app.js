@@ -63,12 +63,14 @@ const state = {
   pointers: new Map(),
   pinch: null,
   suppressDraw: false,
+  selectionAdditive: false,
   color: { r: 90, g: 47, b: 31, h: 18, s: 66, v: 35 },
   undo: [],
   redo: [],
 };
 
 const compareGap = 80;
+const debugMode = new URLSearchParams(window.location.search).get("debug") === "1";
 
 function canvasSizeForView() {
   if (state.viewMode === "compare" && state.imageData) {
@@ -84,9 +86,6 @@ function canvasSizeForView() {
 }
 
 function resizeDisplay() {
-  const rect = stage.getBoundingClientRect();
-  overlay.width = Math.max(1, Math.floor(rect.width));
-  overlay.height = Math.max(1, Math.floor(rect.height));
   draw();
 }
 
@@ -113,12 +112,18 @@ function draw() {
   const size = canvasSizeForView();
   canvas.width = size.width;
   canvas.height = size.height;
+  overlay.width = size.width;
+  overlay.height = size.height;
   drawMainCanvas();
 
   canvas.style.width = `${size.width * state.view.scale}px`;
   canvas.style.height = `${size.height * state.view.scale}px`;
   canvas.style.transform = `translate(${state.view.x}px, ${state.view.y}px)`;
   canvas.style.transformOrigin = "0 0";
+  overlay.style.width = `${size.width * state.view.scale}px`;
+  overlay.style.height = `${size.height * state.view.scale}px`;
+  overlay.style.transform = `translate(${state.view.x}px, ${state.view.y}px)`;
+  overlay.style.transformOrigin = "0 0";
 
   drawOverlay();
   updateStatus();
@@ -147,10 +152,7 @@ function clearOverlay() {
 function drawOverlay() {
   clearOverlay();
   if (!state.imageData) return;
-
-  octx.save();
-  octx.translate(state.view.x, state.view.y);
-  octx.scale(state.view.scale, state.view.scale);
+  ensureSelectionAlignment();
 
   if (state.selection && state.viewMode === "edited") {
     const selectionImage = octx.createImageData(state.selection.width, state.selection.height);
@@ -178,22 +180,21 @@ function drawOverlay() {
     octx.strokeRect(x, y, w, h);
   }
 
-  octx.restore();
-
   if (state.viewMode === "compare" && state.originalData) {
     drawCompareLabels();
   }
 }
 
 function drawCompareLabels() {
-  const x = state.view.x;
-  const y = state.view.y;
-  const editedX = x + (state.imageData.width + compareGap) * state.view.scale;
+  const x = 0;
+  const y = 0;
+  const editedX = state.imageData.width + compareGap;
   octx.save();
+  octx.scale(1 / state.view.scale, 1 / state.view.scale);
   octx.font = "600 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
   octx.textBaseline = "top";
-  drawLabel("元画像", x + 12, y + 12);
-  drawLabel("加工後", editedX + 12, y + 12);
+  drawLabel("元画像", (x + 12) * state.view.scale, (y + 12) * state.view.scale);
+  drawLabel("加工後", (editedX + 12) * state.view.scale, (y + 12) * state.view.scale);
   octx.restore();
 }
 
@@ -241,7 +242,39 @@ function createMask(fill = 0) {
   };
 }
 
+function createMaskWithSize(width, height, fill = 0) {
+  return {
+    width,
+    height,
+    data: new Uint8Array(width * height).fill(fill),
+  };
+}
+
+function normalizeSelection() {
+  if (!state.selection || !state.imageData) return;
+  const expectedLength = state.imageData.width * state.imageData.height;
+  if (state.selection.data.length !== expectedLength) {
+    state.selection = null;
+    return;
+  }
+  if (
+    state.selection.width !== state.imageData.width ||
+    state.selection.height !== state.imageData.height
+  ) {
+    state.selection = {
+      width: state.imageData.width,
+      height: state.imageData.height,
+      data: new Uint8Array(state.selection.data),
+    };
+  }
+}
+
+function ensureSelectionAlignment() {
+  normalizeSelection();
+}
+
 function ensureSelection() {
+  ensureSelectionAlignment();
   if (!state.selection) state.selection = createMask(0);
 }
 
@@ -314,14 +347,38 @@ function updateHistoryButtons() {
   els.redoButton.disabled = !state.redo.length;
 }
 
+function selectionBounds() {
+  if (!state.selection) return null;
+  const { width, height, data } = state.selection;
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (!data[y * width + x]) continue;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+  return maxX >= 0 ? { minX, minY, maxX, maxY } : null;
+}
+
 function updateStatus() {
   if (!state.imageData) return;
   const selected = state.selection ? state.selection.data.reduce((sum, value) => sum + value, 0) : 0;
   els.statusTitle.textContent = `${state.imageData.width} × ${state.imageData.height}px`;
   const viewLabel = state.viewMode === "compare" ? "比較表示" : state.viewMode === "original" ? "元画像表示" : "編集表示";
-  els.statusDetail.textContent = selected
-    ? `${viewLabel} / 選択中: ${selected.toLocaleString()}px`
-    : `${viewLabel} / 選択範囲なし`;
+  if (!selected) {
+    els.statusDetail.textContent = `${viewLabel} / 選択範囲なし`;
+    return;
+  }
+  const bounds = debugMode ? selectionBounds() : null;
+  els.statusDetail.textContent = bounds
+    ? `${viewLabel} / 選択中: ${selected.toLocaleString()}px / ${bounds.minX},${bounds.minY} - ${bounds.maxX},${bounds.maxY}`
+    : `${viewLabel} / 選択中: ${selected.toLocaleString()}px`;
 }
 
 function setTool(tool) {
@@ -421,17 +478,18 @@ function restoreCircle(x, y) {
   }
 }
 
-function selectRect(a, b) {
-  ensureSelection();
+function selectRect(a, b, additive = false) {
+  const mask = additive && state.selection ? cloneSelection(state.selection) : createMask(0);
   const minX = Math.max(0, Math.min(a.x, b.x));
   const minY = Math.max(0, Math.min(a.y, b.y));
   const maxX = Math.min(state.imageData.width - 1, Math.max(a.x, b.x));
   const maxY = Math.min(state.imageData.height - 1, Math.max(a.y, b.y));
   for (let y = minY; y <= maxY; y += 1) {
     for (let x = minX; x <= maxX; x += 1) {
-      state.selection.data[y * state.imageData.width + x] = 1;
+      mask.data[y * state.imageData.width + x] = 1;
     }
   }
+  state.selection = mask;
 }
 
 function colorDistance(data, index, color) {
@@ -493,35 +551,130 @@ function selectSimilarAt(x, y, record = true, additive = false) {
 
 function averageEdgeColor() {
   const { width, height, data } = state.imageData;
-  let r = 0;
-  let g = 0;
-  let b = 0;
-  let count = 0;
+  const samples = [];
+
+  function pushSample(p) {
+    if (data[p + 3] === 0) return;
+    samples.push({
+      r: data[p],
+      g: data[p + 1],
+      b: data[p + 2],
+      luminance: luminance(data, p),
+    });
+  }
 
   for (let x = 0; x < width; x += 1) {
     for (const y of [0, height - 1]) {
       const p = (y * width + x) * 4;
-      if (data[p + 3] > 0) {
-        r += data[p];
-        g += data[p + 1];
-        b += data[p + 2];
-        count += 1;
-      }
+      pushSample(p);
     }
   }
   for (let y = 0; y < height; y += 1) {
     for (const x of [0, width - 1]) {
       const p = (y * width + x) * 4;
-      if (data[p + 3] > 0) {
-        r += data[p];
-        g += data[p + 1];
-        b += data[p + 2];
-        count += 1;
-      }
+      pushSample(p);
     }
   }
 
-  return count ? { r: r / count, g: g / count, b: b / count } : { r: 255, g: 255, b: 255 };
+  if (!samples.length) {
+    return { r: 255, g: 255, b: 255, luminance: 255, lightBackground: true };
+  }
+
+  samples.sort((a, b2) => a.luminance - b2.luminance);
+  const median = samples[Math.floor(samples.length / 2)].luminance;
+  const lightBackground = median >= 140;
+  const pivot = Math.floor(samples.length * 0.55);
+  const chosen = lightBackground ? samples.slice(pivot) : samples.slice(0, Math.max(1, pivot));
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let luminanceSum = 0;
+  for (const sample of chosen) {
+    r += sample.r;
+    g += sample.g;
+    b += sample.b;
+    luminanceSum += sample.luminance;
+  }
+  return {
+    r: r / chosen.length,
+    g: g / chosen.length,
+    b: b / chosen.length,
+    luminance: luminanceSum / chosen.length,
+    lightBackground,
+  };
+}
+
+function otsuThreshold() {
+  const histogram = new Uint32Array(256);
+  const { data } = state.imageData;
+  let total = 0;
+  let sum = 0;
+
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] === 0) continue;
+    const lum = Math.round(luminance(data, i));
+    histogram[lum] += 1;
+    total += 1;
+    sum += lum;
+  }
+
+  if (!total) return 128;
+
+  let sumB = 0;
+  let weightB = 0;
+  let maxVariance = -1;
+  let threshold = 128;
+
+  for (let t = 0; t < 256; t += 1) {
+    weightB += histogram[t];
+    if (!weightB) continue;
+    const weightF = total - weightB;
+    if (!weightF) break;
+    sumB += t * histogram[t];
+    const meanB = sumB / weightB;
+    const meanF = (sum - sumB) / weightF;
+    const variance = weightB * weightF * (meanB - meanF) * (meanB - meanF);
+    if (variance > maxVariance) {
+      maxVariance = variance;
+      threshold = t;
+    }
+  }
+
+  return threshold;
+}
+
+function buildLuminanceIntegral() {
+  const { width, height, data } = state.imageData;
+  const stride = width + 1;
+  const sums = new Float64Array((width + 1) * (height + 1));
+
+  for (let y = 1; y <= height; y += 1) {
+    let rowSum = 0;
+    for (let x = 1; x <= width; x += 1) {
+      const p = ((y - 1) * width + (x - 1)) * 4;
+      rowSum += data[p + 3] ? luminance(data, p) : 255;
+      sums[y * stride + x] = sums[(y - 1) * stride + x] + rowSum;
+    }
+  }
+
+  function meanAt(x, y, radius) {
+    const x0 = Math.max(0, x - radius);
+    const y0 = Math.max(0, y - radius);
+    const x1 = Math.min(width - 1, x + radius);
+    const y1 = Math.min(height - 1, y + radius);
+    const left = x0;
+    const top = y0;
+    const right = x1 + 1;
+    const bottom = y1 + 1;
+    const sum =
+      sums[bottom * stride + right] -
+      sums[top * stride + right] -
+      sums[bottom * stride + left] +
+      sums[top * stride + left];
+    return sum / ((x1 - x0 + 1) * (y1 - y0 + 1));
+  }
+
+  return { meanAt };
 }
 
 function selectBackground(record = true) {
@@ -529,21 +682,57 @@ function selectBackground(record = true) {
   if (record) pushHistory();
   const tolerance = Number(els.tolerance.value);
   const edge = averageEdgeColor();
+  const otsu = otsuThreshold();
+  const localLuminance = buildLuminanceIntegral();
   const mask = createMask(0);
   const { width, height, data } = state.imageData;
   const queue = [];
   let cursor = 0;
   const visited = new Uint8Array(width * height);
+  const cutoff = edge.lightBackground
+    ? clamp(otsu - Math.round(tolerance * 0.32), 0, 255)
+    : clamp(otsu + Math.round(tolerance * 0.32), 0, 255);
+  const edgeFloor = edge.lightBackground
+    ? edge.luminance - Math.max(12, tolerance * 0.18)
+    : edge.luminance + Math.max(12, tolerance * 0.18);
 
-  function add(x, y) {
+  function pixelValue(pixelIndex) {
+    const p = pixelIndex * 4;
+    return {
+      a: data[p + 3],
+      luminance: luminance(data, p),
+    };
+  }
+
+  function add(x, y, fromPixel = null) {
     if (!inBounds(x, y)) return;
     const i = y * width + x;
     if (visited[i]) return;
-    visited[i] = 1;
     const p = i * 4;
-    if (data[p + 3] === 0 || colorDistance(data, p, edge) <= tolerance) {
+    const value = pixelValue(i);
+    if (value.a === 0) {
+      visited[i] = 1;
       mask.data[i] = 1;
-      queue.push([x, y]);
+      queue.push([x, y, i]);
+      return;
+    }
+
+    const parent = fromPixel === null ? value : pixelValue(fromPixel);
+    const stepToneDiff = Math.abs(value.luminance - parent.luminance);
+    const stepLimit = Math.max(10, tolerance * 0.18);
+    const localMean = localLuminance.meanAt(x, y, 6);
+    const localLimit = Math.max(10, tolerance * 0.16);
+    const toneMatch = edge.lightBackground
+      ? value.luminance >= Math.max(cutoff, edgeFloor, localMean - localLimit)
+      : value.luminance <= Math.min(cutoff, edgeFloor, localMean + localLimit);
+    const parentToneMatch = edge.lightBackground
+      ? value.luminance >= parent.luminance - stepLimit
+      : value.luminance <= parent.luminance + stepLimit;
+
+    if (toneMatch && parentToneMatch && stepToneDiff <= Math.max(18, tolerance * 0.45)) {
+      visited[i] = 1;
+      mask.data[i] = 1;
+      queue.push([x, y, i]);
     }
   }
 
@@ -557,12 +746,16 @@ function selectBackground(record = true) {
   }
 
   while (cursor < queue.length) {
-    const [x, y] = queue[cursor];
+    const [x, y, fromPixel] = queue[cursor];
     cursor += 1;
-    add(x + 1, y);
-    add(x - 1, y);
-    add(x, y + 1);
-    add(x, y - 1);
+    add(x + 1, y, fromPixel);
+    add(x - 1, y, fromPixel);
+    add(x, y + 1, fromPixel);
+    add(x, y - 1, fromPixel);
+    add(x + 1, y + 1, fromPixel);
+    add(x + 1, y - 1, fromPixel);
+    add(x - 1, y + 1, fromPixel);
+    add(x - 1, y - 1, fromPixel);
   }
 
   state.selection = mask;
@@ -571,7 +764,7 @@ function selectBackground(record = true) {
 
 function featherSelection(mask, radius) {
   if (!radius) return mask;
-  const out = createMask(0);
+  const out = createMaskWithSize(mask.width, mask.height, 0);
   const { width, height } = mask;
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -600,6 +793,8 @@ function featherSelection(mask, radius) {
 
 function applyAlphaToSelection(makeSelectedTransparent, record = true) {
   if (!state.imageData || !state.selection) return;
+  ensureSelectionAlignment();
+  if (!state.selection) return;
   if (record) pushHistory();
   const radius = Number(els.feather.value);
   const mask = featherSelection(state.selection, radius);
@@ -752,6 +947,25 @@ function updateColorUi(fromRgb = false) {
   drawColorMap();
 }
 
+function applyLoadedImage(img) {
+  const loadCanvas = document.createElement("canvas");
+  loadCanvas.width = img.naturalWidth;
+  loadCanvas.height = img.naturalHeight;
+  const loadCtx = loadCanvas.getContext("2d", { willReadFrequently: true });
+  loadCtx.drawImage(img, 0, 0);
+  state.imageData = loadCtx.getImageData(0, 0, loadCanvas.width, loadCanvas.height);
+  state.originalData = cloneImageData(state.imageData);
+  state.resetData = cloneImageData(state.imageData);
+  state.selection = null;
+  state.undo = [];
+  state.redo = [];
+  state.hasColorApplied = false;
+  state.imageLoaded = true;
+  els.emptyState.style.display = "none";
+  fitImageToStage();
+  draw();
+}
+
 function drawColorMap() {
   const { width, height } = els.colorMap;
   const image = colorMapCtx.createImageData(width, height);
@@ -793,24 +1007,16 @@ function loadImage(file) {
   const url = URL.createObjectURL(file);
   const img = new Image();
   img.onload = () => {
-    const loadCanvas = document.createElement("canvas");
-    loadCanvas.width = img.naturalWidth;
-    loadCanvas.height = img.naturalHeight;
-    const loadCtx = loadCanvas.getContext("2d", { willReadFrequently: true });
-    loadCtx.drawImage(img, 0, 0);
-    state.imageData = loadCtx.getImageData(0, 0, loadCanvas.width, loadCanvas.height);
-    state.originalData = cloneImageData(state.imageData);
-    state.resetData = cloneImageData(state.imageData);
-    state.selection = null;
-    state.undo = [];
-    state.redo = [];
-    state.hasColorApplied = false;
-    state.imageLoaded = true;
-    els.emptyState.style.display = "none";
-    fitImageToStage();
-    draw();
+    applyLoadedImage(img);
     URL.revokeObjectURL(url);
   };
+  img.src = url;
+}
+
+function loadImageFromUrl(url) {
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+  img.onload = () => applyLoadedImage(img);
   img.src = url;
 }
 
@@ -891,6 +1097,7 @@ stage.addEventListener("pointerdown", (evt) => {
   }
 
   pushHistory();
+  state.selectionAdditive = evt.metaKey || evt.ctrlKey;
   if (state.tool === "magic" && inBounds(point.x, point.y)) {
     selectSimilarAt(point.x, point.y, false, evt.metaKey || evt.ctrlKey);
     state.drawing = false;
@@ -954,11 +1161,12 @@ stage.addEventListener("pointerup", (evt) => {
   if (!state.drawing || !state.imageData) return;
   const point = imagePoint(evt);
   if (state.tool === "rect" && state.dragStart) {
-    selectRect(state.dragStart, point);
+    selectRect(state.dragStart, point, state.selectionAdditive);
     state.rectPreview = null;
     state.dragStart = null;
   }
   state.drawing = false;
+  state.selectionAdditive = false;
   state.panStart = null;
   draw();
 });
@@ -966,6 +1174,7 @@ stage.addEventListener("pointerup", (evt) => {
 stage.addEventListener("pointercancel", (evt) => {
   endPointer(evt);
   state.drawing = false;
+  state.selectionAdditive = false;
   state.panStart = null;
   state.rectPreview = null;
   state.suppressDraw = false;
@@ -1085,6 +1294,12 @@ window.addEventListener("resize", resizeDisplay);
 resizeDisplay();
 updateColorUi(true);
 updateHistoryButtons();
+
+const searchParams = new URLSearchParams(window.location.search);
+const debugImage = searchParams.get("image");
+if (debugImage) {
+  loadImageFromUrl(decodeURIComponent(debugImage));
+}
 
 if ("serviceWorker" in navigator && window.isSecureContext) {
   window.addEventListener("load", () => {
