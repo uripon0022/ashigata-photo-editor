@@ -86,8 +86,14 @@
               <button class="view-button" data-view="original" type="button">元画像</button>
               <button class="view-button" data-view="compare" type="button">比較</button>
             </div>
-            <button id="rotateLeftButton" class="icon-button" type="button" title="左に90度回転">↺</button>
-            <button id="rotateRightButton" class="icon-button" type="button" title="右に90度回転">↻</button>
+            <button id="rotateLeftButton" class="angle-button" type="button" title="左に90度回転">
+              <span aria-hidden="true">⟲</span>
+              <span>左90°</span>
+            </button>
+            <button id="rotateRightButton" class="angle-button" type="button" title="右に90度回転">
+              <span aria-hidden="true">⟳</span>
+              <span>右90°</span>
+            </button>
             <button id="undoButton" class="icon-button" type="button" title="戻る">↶</button>
             <button id="redoButton" class="icon-button" type="button" title="進む">↷</button>
             <button id="previewBgButton" type="button">白背景表示</button>
@@ -119,6 +125,11 @@
             <label>G<input id="greenInput" type="number" min="0" max="255" value="47"></label>
             <label>B<input id="blueInput" type="number" min="0" max="255" value="31"></label>
           </div>
+          <div class="saved-color-bar">
+            <h3>保存色</h3>
+            <button id="saveColorButton" class="mini-button" type="button" title="現在の色を保存">保存</button>
+          </div>
+          <div id="savedColors" class="saved-colors" aria-label="保存色"></div>
           <label class="check-row">
             <input id="selectedOnly" type="checkbox" checked>
             選択範囲だけ

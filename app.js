@@ -35,6 +35,8 @@ const els = {
   redInput: document.querySelector("#redInput"),
   greenInput: document.querySelector("#greenInput"),
   blueInput: document.querySelector("#blueInput"),
+  saveColorButton: document.querySelector("#saveColorButton"),
+  savedColors: document.querySelector("#savedColors"),
   selectedOnly: document.querySelector("#selectedOnly"),
   keepAlpha: document.querySelector("#keepAlpha"),
   preserveTexture: document.querySelector("#preserveTexture"),
@@ -65,12 +67,14 @@ const state = {
   suppressDraw: false,
   selectionAdditive: false,
   color: { r: 90, g: 47, b: 31, h: 18, s: 66, v: 35 },
+  savedColors: [],
   undo: [],
   redo: [],
 };
 
 const compareGap = 80;
 const debugMode = new URLSearchParams(window.location.search).get("debug") === "1";
+const savedColorsKey = "ashigata-editor-saved-colors";
 
 function canvasSizeForView() {
   if (state.viewMode === "compare" && state.imageData) {
@@ -930,6 +934,74 @@ function componentToHex(value) {
   return value.toString(16).padStart(2, "0");
 }
 
+function currentHexColor() {
+  return `#${componentToHex(state.color.r)}${componentToHex(state.color.g)}${componentToHex(state.color.b)}`;
+}
+
+function persistSavedColors() {
+  try {
+    localStorage.setItem(savedColorsKey, JSON.stringify(state.savedColors));
+  } catch {}
+}
+
+function renderSavedColors() {
+  if (!els.savedColors) return;
+  els.savedColors.innerHTML = "";
+  const current = currentHexColor().toLowerCase();
+
+  state.savedColors.forEach((hex, index) => {
+    const item = document.createElement("div");
+    item.className = "saved-color-item";
+
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = `saved-color-chip${hex.toLowerCase() === current ? " active" : ""}`;
+    chip.title = `${hex} を使う`;
+    chip.style.background = hex;
+    chip.addEventListener("click", () => {
+      const match = hex.match(/^#?([0-9a-f]{6})$/i);
+      if (!match) return;
+      const value = match[1];
+      state.color.r = parseInt(value.slice(0, 2), 16);
+      state.color.g = parseInt(value.slice(2, 4), 16);
+      state.color.b = parseInt(value.slice(4, 6), 16);
+      updateColorUi(true);
+    });
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "saved-color-remove";
+    remove.title = `${hex} を削除`;
+    remove.setAttribute("aria-label", `${hex} を削除`);
+    remove.textContent = "×";
+    remove.addEventListener("click", (evt) => {
+      evt.stopPropagation();
+      state.savedColors.splice(index, 1);
+      persistSavedColors();
+      renderSavedColors();
+    });
+
+    item.append(chip, remove);
+    els.savedColors.append(item);
+  });
+}
+
+function loadSavedColors() {
+  try {
+    const raw = localStorage.getItem(savedColorsKey);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(parsed)) {
+      state.savedColors = parsed
+        .filter((value) => typeof value === "string" && /^#?[0-9a-f]{6}$/i.test(value))
+        .map((value) => (value.startsWith("#") ? value : `#${value}`))
+        .slice(0, 10);
+    }
+  } catch {
+    state.savedColors = [];
+  }
+  renderSavedColors();
+}
+
 function updateColorUi(fromRgb = false) {
   if (fromRgb) {
     Object.assign(state.color, rgbToHsv(state.color.r, state.color.g, state.color.b));
@@ -937,7 +1009,7 @@ function updateColorUi(fromRgb = false) {
     Object.assign(state.color, hsvToRgb(state.color.h, state.color.s, state.color.v));
   }
 
-  const hex = `#${componentToHex(state.color.r)}${componentToHex(state.color.g)}${componentToHex(state.color.b)}`;
+  const hex = currentHexColor();
   els.colorSwatch.style.background = hex;
   els.hexColor.value = hex;
   els.redInput.value = state.color.r;
@@ -945,6 +1017,7 @@ function updateColorUi(fromRgb = false) {
   els.blueInput.value = state.color.b;
   els.hueSlider.value = state.color.h;
   drawColorMap();
+  renderSavedColors();
 }
 
 function applyLoadedImage(img) {
@@ -1212,6 +1285,14 @@ els.clearSelectionButton.addEventListener("click", () => {
 els.deleteSelectionButton.addEventListener("click", () => applyAlphaToSelection(true));
 els.keepSelectionButton.addEventListener("click", () => applyAlphaToSelection(false));
 els.applyColorButton.addEventListener("click", applyColor);
+els.saveColorButton.addEventListener("click", () => {
+  const hex = currentHexColor();
+  state.savedColors = state.savedColors.filter((value) => value.toLowerCase() !== hex.toLowerCase());
+  state.savedColors.unshift(hex);
+  state.savedColors = state.savedColors.slice(0, 10);
+  persistSavedColors();
+  renderSavedColors();
+});
 els.rotateLeftButton.addEventListener("click", () => rotateCanvas("left"));
 els.rotateRightButton.addEventListener("click", () => rotateCanvas("right"));
 
@@ -1292,6 +1373,7 @@ els.colorMap.addEventListener("pointermove", (evt) => {
 
 window.addEventListener("resize", resizeDisplay);
 resizeDisplay();
+loadSavedColors();
 updateColorUi(true);
 updateHistoryButtons();
 
